@@ -49,9 +49,8 @@ unsigned long **find_sys_call_table()
 
 int my_sys_open(const char __user *filename, int flags, umode_t mode)
 {
-
-printk(KERN_DEBUG "Opened file!\n");
-return orig_sys_setopen(filename, eflags, mode);
+    printk(KERN_DEBUG "Opened file!\n");
+    return orig_sys_open(filename, flags, mode);
 }
 
 static int __init syscall_init(void)
