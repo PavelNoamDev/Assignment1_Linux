@@ -1,4 +1,3 @@
-/*comment added by Noam, test github push */
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/types.h>
