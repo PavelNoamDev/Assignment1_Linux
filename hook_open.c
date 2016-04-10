@@ -6,6 +6,7 @@
 #include <linux/delay.h>
 #include <linux/sched.h>
 #include <linux/version.h>
+#include<linux/slab.h>
 
 
 
@@ -49,7 +50,21 @@ unsigned long **find_sys_call_table()
 
 int my_sys_open(const char __user *filename, int flags, umode_t mode)
 {
-    printk(KERN_DEBUG "Opened file!\n");
+    char *pathname,*p = NULL;
+    struct mm_struct *mm = current->mm;
+    if (mm) {
+        down_read(&mm->mmap_sem);
+        if (mm->exe_file) {
+            pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
+            if (pathname) {
+                p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
+                /*Now you have the path name of exe in p*/
+                }
+            }
+        up_read(&mm->mmap_sem);
+    }
+    printk("%s\" (pid %i) is opening : %s\n",
+    p, current->pid, filename);
     return orig_sys_open(filename, flags, mode);
 }
 

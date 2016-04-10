@@ -1,4 +1,4 @@
-obj-m += KMonitor.o
+obj-m += hook_open.o
 
 all:
 	make -C /lib/modules/`uname -r`/build M=$(PWD) modules
