@@ -10,7 +10,7 @@
 
 
 
-// Write Protect Bit (CR0:16)
+// Write  Protect Bit (CR0:16)
 #define CR0_WP 0x00010000
 
 MODULE_LICENSE("GPL");
