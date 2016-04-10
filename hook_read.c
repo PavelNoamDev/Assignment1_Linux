@@ -19,7 +19,8 @@ void **syscall_table;
 
 unsigned long **find_sys_call_table(void);
 
-long (*orig_sys_open)(const char __user *filename, int flags, umode_t mode);
+long (*orig_sys_read)(unsigned int fd, char __user *buf, size_t count);
+
 
 /**
  * /boot/System.map-3.13.0-43-generic:
@@ -48,24 +49,24 @@ unsigned long **find_sys_call_table()
     return NULL;
 }
 
-int my_sys_open(const char __user *filename, int flags, umode_t mode)
+int my_sys_read(unsigned int fd, char __user *buf, size_t count)
 {
     char *pathname,*p = NULL;
     struct mm_struct *mm = current->mm;
-    if (mm) {
+    if (mm)
+    {
         down_read(&mm->mmap_sem);
         if (mm->exe_file) {
             pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
             if (pathname) {
                 p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
                 /*Now you have the path name of exe in p*/
-                }
             }
+        }
         up_read(&mm->mmap_sem);
     }
-    printk("%s (pid %i) is opening : %s\n",
-    p, current->pid, filename);
-    return orig_sys_open(filename, flags, mode);
+    printk("%s (pid %i) is reading\n", p, current->pid);
+    return orig_sys_read(fd, buf, count);
 }
 
 static int __init syscall_init(void)
@@ -87,8 +88,8 @@ static int __init syscall_init(void)
     write_cr0(cr0 & ~CR0_WP);
 
     printk(KERN_DEBUG "Read only disabled. Proceeding...\n");
-    orig_sys_open = syscall_table[__NR_open];
-    syscall_table[__NR_open] = my_sys_open;
+    orig_sys_read = syscall_table[__NR_read];
+    syscall_table[__NR_read] = my_sys_read;
 
     write_cr0(cr0);
 
@@ -104,10 +105,11 @@ static void __exit syscall_release(void)
     cr0 = read_cr0();
     write_cr0(cr0 & ~CR0_WP);
 
-    syscall_table[__NR_open] = orig_sys_open;
+    syscall_table[__NR_read] = orig_sys_read;
 
     write_cr0(cr0);
 }
 
 module_init(syscall_init);
 module_exit(syscall_release);
+
