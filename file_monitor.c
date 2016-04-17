@@ -56,78 +56,62 @@ volatile unsigned int sys_counter = 0;
 
  int my_sys_open(const char __user *filename, int flags, umode_t mode)
  {
- 	sys_counter++;
- 	if (sys_counter % 1000 == 0)
- 	{
- 		sys_counter = 0;
- 		char *pathname,*p = NULL;
- 		struct mm_struct *mm = current->mm;
- 		if (mm) {
- 			down_read(&mm->mmap_sem);
- 			if (mm->exe_file) {
- 				pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
- 				if (pathname) {
- 					p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
-/*Now you have the path name of exe in p*/
- 				}
- 			}
- 			up_read(&mm->mmap_sem);
- 		}
-		printk("%s (pid %i) is opening : %s\n",
-				p, current->pid, filename);
- 	}
+	char *pathname,*p = NULL;
+	struct mm_struct *mm = current->mm;
+	if (mm) {
+		down_read(&mm->mmap_sem);
+		if (mm->exe_file) {
+			pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
+			if (pathname) {
+				p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
+				printk("%s (pid %i) is opening : %s\n",
+					p, current->pid, filename);
+			}
+		}
+		up_read(&mm->mmap_sem);
+	}
  	return orig_sys_open(filename, flags, mode);
  }
 
 
  int my_sys_read(unsigned int fd, char __user *buf, size_t count)
  {
- 	sys_counter++;
- 	if (sys_counter % 1000 == 0)
+ 	/*char *pathname,*p = NULL;
+ 	struct mm_struct *mm = current->mm;
+ 	if (mm)
  	{
- 		sys_counter = 0;
-	 	char *pathname,*p = NULL;
-	 	struct mm_struct *mm = current->mm;
-	 	if (mm)
-	 	{
-	 		down_read(&mm->mmap_sem);
-	 		if (mm->exe_file) {
-	 			pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
-	 			if (pathname) {
-	 				p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
-	/*Now you have the path name of exe in p*/
-	 			}
-	 		}
-	 		up_read(&mm->mmap_sem);
-	 	}
-	 	printk("%s (pid %i) is reading\n", p, current->pid);
-	 		printk("reading\n");
-	 }
+ 		down_read(&mm->mmap_sem);
+ 		if (mm->exe_file) {
+ 			pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
+ 			if (pathname) {
+ 				p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
+ 				printk("%s (pid %i) is reading\n", p, current->pid);
+ 			}
+ 		}
+ 		up_read(&mm->mmap_sem);
+ 	}*/
+ 	printk("pid %i is reading\n", current->pid);
  	return orig_sys_read(fd, buf, count);
  }
 
 
  int my_sys_write(unsigned int fd, const char __user *buf, size_t count)
  {
- 	sys_counter++;
- 	if (sys_counter % 1000 == 0)
+ 	/*char *pathname,*p = NULL;
+ 	struct mm_struct *mm = current->mm;
+ 	if (mm)
  	{
-	 	char *pathname,*p = NULL;
-	 	struct mm_struct *mm = current->mm;
-	 	if (mm)
-	 	{
-	 		down_read(&mm->mmap_sem);
-	 		if (mm->exe_file) {
-	 			pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
-	 			if (pathname) {
-	 				p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
-	/*Now you have the path name of exe in p*/
-	 			}
-	 		}
-	 		up_read(&mm->mmap_sem);
-	 	}
-	 	printk("%s (pid %i) is writing\n", p, current->pid);
-	 }
+ 		down_read(&mm->mmap_sem);
+ 		if (mm->exe_file) {
+ 			pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
+ 			if (pathname) {
+ 				p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
+				printk("%s (pid %i) is writing\n", p, current->pid);
+ 			}
+ 		}
+ 		up_read(&mm->mmap_sem);
+ 	}*/
+ 	printk("pid %i is writing\n", current->pid);
  	return orig_sys_write(fd, buf, count);
  }
 
@@ -182,7 +166,7 @@ volatile unsigned int sys_counter = 0;
 
  	syscall_table[__NR_read] = orig_sys_read;
 
- 	syscall_table[__NR_open] = orig_sys_open;
+ 	syscall_table[__NR_write] = orig_sys_write;
 
  	write_cr0(cr0);
  }
