@@ -264,7 +264,7 @@ static void __exit syscall_release(void)
         kfree(curr_node);
     }
 
-    printk(KERN_DEBUG "Stopping hook_listen module!\n");
+    printk(KERN_DEBUG "Stopping network_monitor module!\n");
 
     cr0 = read_cr0();
     write_cr0(cr0 & ~CR0_WP);
