@@ -54,6 +54,7 @@ unsigned long **find_sys_call_table(void);
 long (*orig_sys_socket)(int domain, int type, int protocol);
 long (*orig_sys_bind)(int sockfd, struct sockaddr __user *addr, int addrlen);
 long (*orig_sys_listen)(int sockfd, int backlog);
+long (*orig_sys_accept)(int sockfd, struct sockaddr __user *addr, int __user *addrlen);
 
 /**
  * /boot/System.map-3.13.0-43-generic:
@@ -120,7 +121,6 @@ long my_sys_socket(int domain, int type, int protocol)
     node_to_add->port = 0;
     node_to_add->ip.s_addr = 0;
     list_add(&(node_to_add->node), &(sockets_lst.node));
-//    printk(KERN_INFO "Process (pid: %i) is socket on %d \n", current->pid, sockfd);
     return sockfd;
 }
 
@@ -139,8 +139,6 @@ long my_sys_bind(int sockfd, struct sockaddr __user *addr, int addrlen)
         {
             curr_node->port = port;
             curr_node->ip = ip;
-//            printk(KERN_INFO "Process (pid: %i) is binding on %d \n", current->pid, ntohs(((struct sockaddr_in *)addr)->sin_port));
-//            printk(KERN_INFO "Process (pid: %i) is binding on %d.%d.%d.%d \n", current->pid, NIPQUAD(((struct sockaddr_in *)addr)->sin_addr));
             return orig_sys_bind(sockfd, addr, addrlen);
         }
     }
@@ -153,6 +151,8 @@ int my_sys_listen(int sockfd, int backlog)
     struct list_head *tmp_node = NULL, *pos = NULL;
     char *pathname = NULL, *p = NULL;
     struct mm_struct *mm = current->mm;
+
+    // Get full path to the current process executable
     if (mm) {
         down_read(&mm->mmap_sem);
         if (mm->exe_file) {
@@ -167,14 +167,46 @@ int my_sys_listen(int sockfd, int backlog)
     // Search for node with this fd
     list_for_each_safe(pos, tmp_node, &sockets_lst.node)
     {
-        curr_node = list_entry(pos,
-        struct socket_node, node);
+        curr_node = list_entry(pos, struct socket_node, node);
         if (curr_node->sockfd == sockfd) {
             printk(KERN_INFO
             "%s (pid: %i) is listening on %d.%d.%d.%d:%d \n", p, current->pid, NIPQUAD(curr_node->ip), curr_node->port);
         }
     }
+    kfree(pathname);
     return orig_sys_listen(sockfd, backlog);
+}
+
+
+long my_sys_accept(int sockfd, struct sockaddr __user *addr, int __user *addrlen)
+{
+    int new_sockfd = orig_sys_accept(sockfd, addr, addrlen); // Wait for connection
+    unsigned short port = ntohs(((struct sockaddr_in *)addr)->sin_port);
+    struct in_addr ip = ((struct sockaddr_in *)addr)->sin_addr;
+    char *pathname = NULL, *p = NULL;
+    struct mm_struct *mm = current->mm;
+
+    // Check if client with IPv4
+    if(((struct sockaddr_in *)addr)->sin_family != AF_INET)
+        return orig_sys_accept(sockfd, addr, addrlen);
+
+    // Get full path to the current process executable
+    if (mm) {
+        down_read(&mm->mmap_sem);
+        if (mm->exe_file) {
+            pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
+            if (pathname) {
+                p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
+            }
+        }
+        up_read(&mm->mmap_sem);
+    }
+
+    printk(KERN_INFO
+    "%s (pid: %i) received a connection from  %d.%d.%d.%d:%d \n", p, current->pid, NIPQUAD(ip), port);
+
+    kfree(pathname);
+    return new_sockfd;
 }
 
 static int __init syscall_init(void)
@@ -207,6 +239,9 @@ static int __init syscall_init(void)
     orig_sys_listen = syscall_table[__NR_listen];
     syscall_table[__NR_listen] = my_sys_listen;
 
+    orig_sys_accept = syscall_table[__NR_accept];
+    syscall_table[__NR_accept] = my_sys_accept;
+
     write_cr0(cr0);
 
     // Init seen TCP sockets list
@@ -237,6 +272,7 @@ static void __exit syscall_release(void)
     syscall_table[__NR_socket] = orig_sys_socket;
     syscall_table[__NR_bind] = orig_sys_bind;
     syscall_table[__NR_listen] = orig_sys_listen;
+    syscall_table[__NR_accept] = orig_sys_accept;
 
     write_cr0(cr0);
 }
