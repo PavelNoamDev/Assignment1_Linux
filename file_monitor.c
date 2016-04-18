@@ -15,6 +15,8 @@
 
 MODULE_LICENSE("GPL");
 
+int is_file_monitor_enabled = 1;
+
 void **syscall_table;
 
 unsigned long **find_sys_call_table(void);
@@ -173,3 +175,5 @@ volatile unsigned int sys_counter = 0;
 
  module_init(syscall_init);
  module_exit(syscall_release);
+
+EXPORT_SYMBOL_GPL(is_file_monitor_enabled);

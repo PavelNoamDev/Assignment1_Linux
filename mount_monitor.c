@@ -13,6 +13,8 @@
 
 MODULE_LICENSE("GPL");
 
+int is_mount_monitor_enabled = 1;
+
 void **syscall_table;
 
 unsigned long **find_sys_call_table(void);
@@ -53,30 +55,32 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
     char *pathname = NULL, *p = NULL;
     struct mm_struct *mm = current->mm;
     int result = orig_sys_mount(source, target, filesystemtype, flags, data);
-
-    // Get full path to the current process executable
-    if (mm) {
-        down_read(&mm->mmap_sem);
-        if (mm->exe_file) {
-            pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
-            if (pathname) {
-                p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
-            }
-        }
-        up_read(&mm->mmap_sem);
-    }
-
-    if(result == 0)
+    if(is_mount_monitor_enabled)
     {
-        printk(KERN_INFO
-        "%s (pid: %i) mounted %s to %s using %s file system \n", p, current->pid, source, target, filesystemtype);
+        // Get full path to the current process executable
+        if (mm) {
+            down_read(&mm->mmap_sem);
+            if (mm->exe_file) {
+                pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
+                if (pathname) {
+                    p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
+                }
+            }
+            up_read(&mm->mmap_sem);
+        }
+
+        if(result == 0)
+        {
+            printk(KERN_INFO
+            "%s (pid: %i) mounted %s to %s using %s file system \n", p, current->pid, source, target, filesystemtype);
+        }
+        kfree(pathname);
     }
-    kfree(pathname);
     return result;
 }
 
 
-static int __init syscall_init(void)
+static int __init mount_monitor_init(void)
 {
     unsigned long cr0;
 
@@ -104,7 +108,7 @@ static int __init syscall_init(void)
     return 0;
 }
 
-static void __exit syscall_release(void)
+static void __exit mount_monitor_release(void)
 {
     unsigned long cr0;
 
@@ -118,5 +122,7 @@ static void __exit syscall_release(void)
     write_cr0(cr0);
 }
 
-module_init(syscall_init);
-module_exit(syscall_release);
+module_init(mount_monitor_init);
+module_exit(mount_monitor_release);
+
+EXPORT_SYMBOL_GPL(is_mount_monitor_enabled);
