@@ -81,9 +81,12 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
             down_read(&mm->mmap_sem);
             if (mm->exe_file) {
                 pathname = kmalloc(PATH_MAX, GFP_ATOMIC);
-                if (pathname) {
-                    p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
+                if(unlikely(!pathname))
+                {
+                    printk(KERN_ERR "Not enough memory for pathname! \n");
+                    return result;
                 }
+                p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
             }
             up_read(&mm->mmap_sem);
         }
@@ -103,7 +106,7 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
             if(unlikely(!line_to_add))
             {
                 printk(KERN_ERR "Not enough memory for history_node!\n");
-                return -1;
+                return result;
             }
 
             snprintf(line_to_add->msg, MAX_HISTORY_LINE,
