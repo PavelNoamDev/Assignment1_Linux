@@ -16,7 +16,7 @@
 
 // Write  Protect Bit (CR0:16)
 #define CR0_WP 0x00010000
-#define MAX_HISTORY 3
+#define MAX_HISTORY 10
 #define MAX_HISTORY_LINE (PATH_MAX*3 + 100)
 
 MODULE_LICENSE("GPL");

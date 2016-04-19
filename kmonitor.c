@@ -5,7 +5,7 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 
-#define MAX_HISTORY 3
+#define MAX_HISTORY 10
 #define MAX_HISTORY_LINE (PATH_MAX*3 + 100)
 
 extern int is_file_monitor_enabled;
