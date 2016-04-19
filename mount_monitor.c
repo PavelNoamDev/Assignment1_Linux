@@ -110,8 +110,8 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
             }
 
             snprintf(line_to_add->msg, MAX_HISTORY_LINE,
-            "%04d/%02d/%02d %02d:%02d:%02d, %s (pid: %i) mounted %s to %s using %s file system\n",
-            tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+            "%02d/%02d/%04d %02d:%02d:%02d, %s (pid: %i) mounted %s to %s using %s file system\n",
+            tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900, tm.tm_hour, tm.tm_min, tm.tm_sec,
             p, current->pid, source, target, filesystemtype);
             line_to_add->time_in_sec = (u32)time.tv_sec;
 

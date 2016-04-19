@@ -218,8 +218,8 @@ int my_sys_listen(int sockfd, int backlog)
                 }
 
                 snprintf(line_to_add->msg, MAX_HISTORY_LINE,
-                         "%04d/%02d/%02d %02d:%02d:%02d, %s (pid: %i) is listening on %d.%d.%d.%d:%d\n",
-                         tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+                         "%02d/%02d/%04d %02d:%02d:%02d, %s (pid: %i) is listening on %d.%d.%d.%d:%d\n",
+                         tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900, tm.tm_hour, tm.tm_min, tm.tm_sec,
                          p, current->pid, NIPQUAD(curr_node->ip), curr_node->port);
                 line_to_add->time_in_sec = (u32)time.tv_sec;
                 list_add(&(line_to_add->node), &(net_mon_history.node));
@@ -294,8 +294,8 @@ long my_sys_accept(int sockfd, struct sockaddr __user *addr, int __user *addrlen
     }
 
     snprintf(line_to_add->msg, MAX_HISTORY_LINE,
-    "%04d/%02d/%02d %02d:%02d:%02d, %s (pid: %i) received a connection from %d.%d.%d.%d:%d\n",
-    tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+    "%02d/%02d/%04d %02d:%02d:%02d, %s (pid: %i) received a connection from %d.%d.%d.%d:%d\n",
+    tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900, tm.tm_hour, tm.tm_min, tm.tm_sec,
     p, current->pid, NIPQUAD(ip), port);
     line_to_add->time_in_sec = (u32)time.tv_sec;
 
