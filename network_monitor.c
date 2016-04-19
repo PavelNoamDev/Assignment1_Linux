@@ -1,7 +1,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/types.h>
-//#include <asm/cacheflush.h>
 #include <linux/syscalls.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
@@ -10,17 +9,25 @@
 #include <linux/inet.h>
 #include <linux/socket.h>
 #include <linux/list.h>
+#include <linux/times.h>
+#include <linux/timekeeping.h>
+#include <linux/rtc.h>
 #include <linux/byteorder/generic.h>
 
 // Write  Protect Bit (CR0:16)
 #define CR0_WP 0x00010000
 #define SOCK_STREAM 1
+#define MAX_HISTORY 3
+#define MAX_HISTORY_LINE (PATH_MAX*3 + 100)
 
 MODULE_LICENSE("GPL");
 
 int is_network_monitor_enabled = 1;
+int curr_num_of_history_lines = 0;
 
 struct socket_node sockets_lst;
+
+struct history_node net_mon_history;
 
 void **syscall_table;
 
@@ -37,12 +44,19 @@ struct sockaddr_in {
     char             sin_zero[8];  // zero this if you want to
 };
 
-// Node in list of seen TCP sockets
+// Node in the list of seen TCP sockets
 struct socket_node {
     struct list_head node;
     int sockfd;
     struct in_addr ip;
     unsigned short port;
+};
+
+// Node in tne list of network monitor messages
+struct history_node {
+    struct list_head node;
+    char msg[MAX_HISTORY_LINE];
+    long time_in_sec;
 };
 
 #define NIPQUAD(addr) \
@@ -57,6 +71,7 @@ long (*orig_sys_socket)(int domain, int type, int protocol);
 long (*orig_sys_bind)(int sockfd, struct sockaddr __user *addr, int addrlen);
 long (*orig_sys_listen)(int sockfd, int backlog);
 long (*orig_sys_accept)(int sockfd, struct sockaddr __user *addr, int __user *addrlen);
+
 
 /**
  * /boot/System.map-3.13.0-43-generic:
@@ -84,6 +99,7 @@ unsigned long **find_sys_call_table()
 
     return NULL;
 }
+
 
 long my_sys_socket(int domain, int type, int protocol)
 {
@@ -126,6 +142,7 @@ long my_sys_socket(int domain, int type, int protocol)
     return sockfd;
 }
 
+
 long my_sys_bind(int sockfd, struct sockaddr __user *addr, int addrlen)
 {
     struct socket_node *curr_node = NULL;
@@ -152,12 +169,17 @@ long my_sys_bind(int sockfd, struct sockaddr __user *addr, int addrlen)
     return orig_sys_bind(sockfd, addr, addrlen);
 }
 
+
 int my_sys_listen(int sockfd, int backlog)
 {
+    struct timeval time;
+    unsigned long local_time;
+    struct rtc_time tm;
     struct socket_node *curr_node = NULL;
     struct list_head *tmp_node = NULL, *pos = NULL;
     char *pathname = NULL, *p = NULL;
     struct mm_struct *mm = current->mm;
+    struct history_node *line_to_add = NULL, *last_history_node = NULL;
     if(is_network_monitor_enabled) {
         // Get full path to the current process executable
         if (mm) {
@@ -171,15 +193,48 @@ int my_sys_listen(int sockfd, int backlog)
             up_read(&mm->mmap_sem);
         }
 
+        // Get current time
+        do_gettimeofday(&time);
+        local_time = (u32)(time.tv_sec - (sys_tz.tz_minuteswest * 60));
+        rtc_time_to_tm(local_time, &tm);
+
         // Search for node with this fd
         list_for_each_safe(pos, tmp_node, &sockets_lst.node)
         {
-            curr_node = list_entry(pos,
-            struct socket_node, node);
+            curr_node = list_entry(pos, struct socket_node, node);
             if (curr_node->sockfd == sockfd) {
                 printk(KERN_INFO
-                "%s (pid: %i) is listening on %d.%d.%d.%d:%d \n", p, current->pid, NIPQUAD(
+                "%s (pid: %i) is listening on %d.%d.%d.%d:%d\n", p, current->pid, NIPQUAD(
                         curr_node->ip), curr_node->port);
+
+                line_to_add = (struct history_node *)kmalloc(sizeof(struct history_node), GFP_KERNEL);
+                if(unlikely(!line_to_add))
+                {
+                    printk(KERN_ERR "Not enough memory for history_node! \n");
+                    return -1;
+                }
+
+                snprintf(line_to_add->msg, MAX_HISTORY_LINE,
+                         "%04d/%02d/%02d %02d:%02d:%02d, %s (pid: %i) is listening on %d.%d.%d.%d:%d\n",
+                         tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+                         p, current->pid, NIPQUAD(curr_node->ip), curr_node->port);
+                line_to_add->time_in_sec = (u32)time.tv_sec;
+                list_add(&(line_to_add->node), &(net_mon_history.node));
+                curr_num_of_history_lines++;
+
+                // If more then 10 lines delete the oldest one
+                if(curr_num_of_history_lines > MAX_HISTORY)
+                {
+                    last_history_node = list_last_entry(&(net_mon_history.node), struct history_node, node);
+//                    printk(KERN_INFO
+//                    "First Line: %s\n", first_history_node->msg);
+                    list_del(&(last_history_node->node));
+                    kfree(last_history_node);
+                    curr_num_of_history_lines--;
+                }
+
+                kfree(pathname);
+                return orig_sys_listen(sockfd, backlog);
             }
         }
         kfree(pathname);
@@ -190,6 +245,10 @@ int my_sys_listen(int sockfd, int backlog)
 
 long my_sys_accept(int sockfd, struct sockaddr __user *addr, int __user *addrlen)
 {
+    struct timeval time;
+    unsigned long local_time;
+    struct rtc_time tm;
+    struct history_node *line_to_add = NULL, *last_history_node = NULL;
     int new_sockfd = orig_sys_accept(sockfd, addr, addrlen); // Wait for connection
     unsigned short port = ntohs(((struct sockaddr_in *)addr)->sin_port);
     struct in_addr ip = ((struct sockaddr_in *)addr)->sin_addr;
@@ -199,6 +258,11 @@ long my_sys_accept(int sockfd, struct sockaddr __user *addr, int __user *addrlen
     // Check if client with IPv4 and network monitoring is enabled
     if(((struct sockaddr_in *)addr)->sin_family != AF_INET || !is_network_monitor_enabled)
         return new_sockfd;
+
+    // Get current time
+    do_gettimeofday(&time);
+    local_time = (u32)(time.tv_sec - (sys_tz.tz_minuteswest * 60));
+    rtc_time_to_tm(local_time, &tm);
 
     // Get full path to the current process executable
     if (mm) {
@@ -215,9 +279,36 @@ long my_sys_accept(int sockfd, struct sockaddr __user *addr, int __user *addrlen
     printk(KERN_INFO
     "%s (pid: %i) received a connection from  %d.%d.%d.%d:%d \n", p, current->pid, NIPQUAD(ip), port);
 
+    // Register message in history
+    line_to_add = (struct history_node *)kmalloc(sizeof(struct history_node), GFP_KERNEL);
+    if(unlikely(!line_to_add))
+    {
+        printk(KERN_ERR "Not enough memory for history_node! \n");
+        return -1;
+    }
+
+    snprintf(line_to_add->msg, MAX_HISTORY_LINE,
+    "%04d/%02d/%02d %02d:%02d:%02d, %s (pid: %i) received a connection from %d.%d.%d.%d:%d\n",
+    tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+    p, current->pid, NIPQUAD(ip), port);
+    line_to_add->time_in_sec = (u32)time.tv_sec;
+
+    list_add(&(line_to_add->node), &(net_mon_history.node));
+    curr_num_of_history_lines++;
+
+    // If more then 10 lines delete the oldest one
+    if(curr_num_of_history_lines > MAX_HISTORY)
+    {
+        last_history_node = list_last_entry(&(net_mon_history.node), struct history_node, node);
+        list_del(&(last_history_node->node));
+        kfree(last_history_node);
+        curr_num_of_history_lines--;
+    }
+
     kfree(pathname);
     return new_sockfd;
 }
+
 
 static int __init network_monitor_init(void)
 {
@@ -257,21 +348,34 @@ static int __init network_monitor_init(void)
     // Init seen TCP sockets list
     INIT_LIST_HEAD(&sockets_lst.node);
 
+    // Init seen history list
+    INIT_LIST_HEAD(&net_mon_history.node);
+
     return 0;
 }
+
 
 static void __exit network_monitor_release(void)
 {
     unsigned long cr0;
     struct socket_node *curr_node = NULL;
+    struct history_node *curr_his_node = NULL;
     struct list_head *tmp_node = NULL, *pos = NULL;
 
-    // Free memory
+    // Free memory of sockets list
     list_for_each_safe(pos, tmp_node, &sockets_lst.node)
     {
         curr_node = list_entry(pos, struct socket_node, node);
         printk(KERN_DEBUG "Freeing node with fd %d \n", curr_node->sockfd);
         kfree(curr_node);
+    }
+
+    // Free memory of history
+    list_for_each_safe(pos, tmp_node, &net_mon_history.node)
+    {
+        curr_his_node = list_entry(pos, struct history_node, node);
+        printk(KERN_DEBUG "Freeing node with msg: %s \n", curr_his_node->msg);
+        kfree(curr_his_node);
     }
 
     printk(KERN_DEBUG "Stopping network_monitor module!\n");
@@ -291,5 +395,4 @@ module_init(network_monitor_init);
 module_exit(network_monitor_release);
 
 EXPORT_SYMBOL_GPL(is_network_monitor_enabled);
-//EXPORT_SYMBOL_GPL(network_monitor_init);
-//EXPORT_SYMBOL_GPL(network_monitor_release)
+EXPORT_SYMBOL_GPL(net_mon_history);
