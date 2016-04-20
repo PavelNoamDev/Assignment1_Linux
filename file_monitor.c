@@ -293,17 +293,17 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 
  	printk(KERN_DEBUG "Read only disabled. Proceeding...\n");
 
-    /*hooking sys_open*/
- 	orig_sys_open = syscall_table[__NR_open];
- 	syscall_table[__NR_open] = my_sys_open;
-
-    /*hooking sys_read*/
- 	orig_sys_read = syscall_table[__NR_read];
- 	syscall_table[__NR_read] = my_sys_read;
-
-    /*hooking sys_write*/
- 	orig_sys_write = syscall_table[__NR_write];
- 	syscall_table[__NR_write] = my_sys_write;
+//    /*hooking sys_open*/
+// 	orig_sys_open = syscall_table[__NR_open];
+// 	syscall_table[__NR_open] = my_sys_open;
+//
+//    /*hooking sys_read*/
+// 	orig_sys_read = syscall_table[__NR_read];
+// 	syscall_table[__NR_read] = my_sys_read;
+//
+//    /*hooking sys_write*/
+// 	orig_sys_write = syscall_table[__NR_write];
+// 	syscall_table[__NR_write] = my_sys_write;
 
  	write_cr0(cr0);
 
@@ -328,17 +328,17 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		 kfree(curr_his_node);
 	 }
 
- 	 printk(KERN_DEBUG "Stopping KMonitor module!\n");
+ 	 printk(KERN_DEBUG "Stopping file monitor module!\n");
 
  	 cr0 = read_cr0();
  	 write_cr0(cr0 & ~CR0_WP);
 
      /*reinstating open, read and write*/
- 	 syscall_table[__NR_open] = orig_sys_open;
-
- 	 syscall_table[__NR_read] = orig_sys_read;
-
- 	 syscall_table[__NR_write] = orig_sys_write;
+// 	 syscall_table[__NR_open] = orig_sys_open;
+//
+// 	 syscall_table[__NR_read] = orig_sys_read;
+//
+// 	 syscall_table[__NR_write] = orig_sys_write;
 
  	 write_cr0(cr0);
  }
