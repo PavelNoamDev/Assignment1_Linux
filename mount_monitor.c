@@ -11,17 +11,16 @@
 #include <linux/rtc.h>
 #include <linux/list.h>
 
-// Write  Protect Bit (CR0:16)
-#define CR0_WP 0x00010000
-#define MAX_HISTORY 10
-#define MAX_HISTORY_LINE (PATH_MAX*3 + 100)
+#define CR0_WP 0x00010000   // Write  Protect Bit (CR0:16)
+#define MAX_HISTORY 10  // Maximum history list size
+#define MAX_HISTORY_LINE (PATH_MAX*3 + 100)  //The maximum message line contains 3 file path + extra const words
 
 MODULE_LICENSE("GPL");
 
-int is_mount_monitor_enabled = 1;
+int is_mount_monitor_enabled = 1;   // Used by KMonitor to control this module
 int curr_num_of_history_lines = 0;
 
-struct history_node mount_mon_history;
+struct history_node mount_mon_history;  // History of events
 
 // Node in tne list of mount monitor messages
 struct history_node {
@@ -38,6 +37,8 @@ long (*orig_sys_mount)( char __user *source, char __user *target,
                         char __user *filesystemtype, unsigned long flags, void __user *data);
 
 /**
+ * Dynamically discover sys call table address.
+ *
  * /boot/System.map-3.13.0-43-generic:
  *
  * ffffffff811bb230 T sys_close
@@ -49,21 +50,20 @@ unsigned long **find_sys_call_table()
 {
     unsigned long ptr;
     unsigned long *p;
-
     for (ptr = (unsigned long) sys_close; ptr < (unsigned long) &loops_per_jiffy; ptr += sizeof(void *))
     {
         p = (unsigned long *) ptr;
-
         if (p[__NR_close] == (unsigned long) sys_close)
         {
             return (unsigned long **) p;
         }
     }
-
     return NULL;
 }
 
-
+/*
+ * sys_mount hook. Also registers system call info to history.
+ */
 long my_sys_mount(  char __user *source, char __user *target, char __user *filesystemtype,
                     unsigned long flags, void __user *data)
 {
@@ -74,7 +74,9 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
     char *pathname = NULL, *p = NULL;
     struct mm_struct *mm = current->mm;
     int result = orig_sys_mount(source, target, filesystemtype, flags, data);
-    if(is_mount_monitor_enabled)
+
+    // Check if the module is enabled and there was no error in the original sys_mount
+    if(is_mount_monitor_enabled && result == 0)
     {
         // Get full path to the current process executable
         if (mm) {
@@ -91,49 +93,47 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
             up_read(&mm->mmap_sem);
         }
 
-        if(result == 0)
+        // Get current time
+        do_gettimeofday(&time);
+        local_time = (u32)(time.tv_sec - (sys_tz.tz_minuteswest * 60));
+        rtc_time_to_tm(local_time, &tm);
+
+        // Write to dmesg
+        printk(KERN_INFO
+        "%s (pid: %i) mounted %s to %s using %s file system\n", p, current->pid, source, target, filesystemtype);
+
+
+        // Save to history
+        line_to_add = (struct history_node *)kmalloc(sizeof(struct history_node), GFP_KERNEL);
+        if(unlikely(!line_to_add))
         {
-            // Get current time
-            do_gettimeofday(&time);
-            local_time = (u32)(time.tv_sec - (sys_tz.tz_minuteswest * 60));
-            rtc_time_to_tm(local_time, &tm);
+            printk(KERN_ERR "Not enough memory for history_node!\n");
+            return result;
+        }
 
-            printk(KERN_INFO
-            "%s (pid: %i) mounted %s to %s using %s file system\n", p, current->pid, source, target, filesystemtype);
+        snprintf(line_to_add->msg, MAX_HISTORY_LINE,
+        "%02d/%02d/%04d %02d:%02d:%02d, %s (pid: %i) mounted %s to %s using %s file system\n",
+        tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900, tm.tm_hour, tm.tm_min, tm.tm_sec,
+        p, current->pid, source, target, filesystemtype);
+        line_to_add->time_in_sec = (u32)time.tv_sec;
 
+        list_add(&(line_to_add->node), &(mount_mon_history.node));
+        curr_num_of_history_lines++;
 
-            line_to_add = (struct history_node *)kmalloc(sizeof(struct history_node), GFP_KERNEL);
-            if(unlikely(!line_to_add))
-            {
-                printk(KERN_ERR "Not enough memory for history_node!\n");
-                return result;
-            }
-
-            snprintf(line_to_add->msg, MAX_HISTORY_LINE,
-            "%02d/%02d/%04d %02d:%02d:%02d, %s (pid: %i) mounted %s to %s using %s file system\n",
-            tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900, tm.tm_hour, tm.tm_min, tm.tm_sec,
-            p, current->pid, source, target, filesystemtype);
-            line_to_add->time_in_sec = (u32)time.tv_sec;
-
-            list_add(&(line_to_add->node), &(mount_mon_history.node));
-            curr_num_of_history_lines++;
-
-            // If more then 10 lines delete the oldest one
-            if(curr_num_of_history_lines > MAX_HISTORY)
-            {
-                last_history_node = list_last_entry(&(mount_mon_history.node), struct history_node, node);
-                list_del(&(last_history_node->node));
-                kfree(last_history_node);
-                curr_num_of_history_lines--;
-            }
-
+        // If more then 10 lines delete the oldest one
+        if(curr_num_of_history_lines > MAX_HISTORY)
+        {
+            last_history_node = list_last_entry(&(mount_mon_history.node), struct history_node, node);
+            list_del(&(last_history_node->node));
+            kfree(last_history_node);
+            curr_num_of_history_lines--;
         }
         kfree(pathname);
     }
     return result;
 }
 
-
+// Init module
 static int __init mount_monitor_init(void)
 {
     unsigned long cr0;
@@ -165,6 +165,7 @@ static int __init mount_monitor_init(void)
     return 0;
 }
 
+// Release module
 static void __exit mount_monitor_release(void)
 {
     unsigned long cr0;
@@ -184,6 +185,7 @@ static void __exit mount_monitor_release(void)
     cr0 = read_cr0();
     write_cr0(cr0 & ~CR0_WP);
 
+    /*hooking sys_mount*/
     syscall_table[__NR_mount] = orig_sys_mount;
 
     write_cr0(cr0);
@@ -192,5 +194,6 @@ static void __exit mount_monitor_release(void)
 module_init(mount_monitor_init);
 module_exit(mount_monitor_release);
 
+// Make it available to KMonitor
 EXPORT_SYMBOL_GPL(is_mount_monitor_enabled);
 EXPORT_SYMBOL_GPL(mount_mon_history);

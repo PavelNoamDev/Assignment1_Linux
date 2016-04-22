@@ -12,19 +12,16 @@
 #include <linux/list.h>
 #include <linux/mutex.h>
 
-
-
-// Write  Protect Bit (CR0:16)
-#define CR0_WP 0x00010000
-#define MAX_HISTORY 10
-#define MAX_HISTORY_LINE (PATH_MAX*3 + 100)
+#define CR0_WP 0x00010000	// Write  Protect Bit (CR0:16)
+#define MAX_HISTORY 10	// Maximum history list size
+#define MAX_HISTORY_LINE (PATH_MAX*3 + 100)	//The maximum message line contains 3 file path + extra const words
 
 MODULE_LICENSE("GPL");
 
-int is_file_monitor_enabled = 1;
+int is_file_monitor_enabled = 1;	// Used by KMonitor to control this module
 int curr_num_of_history_lines = 0;
 
-struct history_node file_mon_history;
+struct history_node file_mon_history;	// History of events
 //struct mutex m;
 
 // Node in tne list of file monitor messages
@@ -37,16 +34,13 @@ struct history_node {
 void **syscall_table;
 
 unsigned long **find_sys_call_table(void);
-
 long (*orig_sys_open)(const char __user *filename, int flags, umode_t mode);
-
 long (*orig_sys_read)(unsigned int fd, char __user *buf, size_t count);
-
 long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 
-volatile unsigned int sys_counter = 0;
-
 /**
+ * Dynamically discover sys call table address
+ *
  * /boot/System.map-3.13.0-43-generic:
  *
  * ffffffff811bb230 T sys_close
@@ -73,6 +67,9 @@ volatile unsigned int sys_counter = 0;
  	return NULL;
  }
 
+/*
+ * sys_open hook. Also registers system call info to history.
+ */
  int my_sys_open(const char __user *filename, int flags, umode_t mode)
  {
 	struct timeval time;
@@ -81,9 +78,12 @@ volatile unsigned int sys_counter = 0;
 	struct history_node *line_to_add = NULL, *last_history_node = NULL;
 	char *pathname = NULL,*p = NULL;
 	struct mm_struct *mm = current->mm;
+
+	// Check if the module is enabled
 	if(is_file_monitor_enabled)
 	{
 //		mutex_lock_killable(&m);
+		// Get full path to the current process executable
 		if (mm) {
 			down_read(&mm->mmap_sem);
 			if (mm->exe_file) {
@@ -101,8 +101,9 @@ volatile unsigned int sys_counter = 0;
 		do_gettimeofday(&time);
 		local_time = (u32)(time.tv_sec - (sys_tz.tz_minuteswest * 60));
 		rtc_time_to_tm(local_time, &tm);
+		// Write to dmesg
 		printk("%s (pid %i) is opening %s\n", p, current->pid, filename);
-
+		// Save to history
 		line_to_add = (struct history_node *)kmalloc(sizeof(struct history_node), GFP_KERNEL);
 		if(unlikely(!line_to_add))
 		{
@@ -133,7 +134,9 @@ volatile unsigned int sys_counter = 0;
  	return orig_sys_open(filename, flags, mode);
  }
 
-
+/*
+ * sys_read hook. Also registers system call info to history.
+ */
  int my_sys_read(unsigned int fd, char __user *buf, size_t count)
  {
 	struct timeval time;
@@ -142,9 +145,12 @@ volatile unsigned int sys_counter = 0;
 	struct history_node *line_to_add = NULL, *last_history_node = NULL;
  	char *pathname = NULL,*p = NULL;
  	struct mm_struct *mm = current->mm;
+
+	// Check if the module is enabled
 	if(is_file_monitor_enabled)
 	{
 //		mutex_lock_killable(&m);
+		// Get full path to the current process executable
 		if (mm)
 		{
 			down_read(&mm->mmap_sem);
@@ -163,8 +169,9 @@ volatile unsigned int sys_counter = 0;
 		do_gettimeofday(&time);
 		local_time = (u32)(time.tv_sec - (sys_tz.tz_minuteswest * 60));
 		rtc_time_to_tm(local_time, &tm);
+		// Write to dmesg
 		printk("%s (pid %i) is reading %d bytes from TODO\n", p, current->pid, (int)count);
-
+		// Save to history
 		line_to_add = (struct history_node *)kmalloc(sizeof(struct history_node), GFP_KERNEL);
 		if(unlikely(!line_to_add))
 		{
@@ -195,7 +202,9 @@ volatile unsigned int sys_counter = 0;
  	return orig_sys_read(fd, buf, count);
  }
 
-
+/*
+ * sys_write hook. Also registers system call info to history.
+ */
  int my_sys_write(unsigned int fd, const char __user *buf, size_t count)
  {
 	struct timeval time;
@@ -204,9 +213,12 @@ volatile unsigned int sys_counter = 0;
 	struct history_node *line_to_add = NULL, *last_history_node = NULL;
  	char *pathname = NULL,*p = NULL;
  	struct mm_struct *mm = current->mm;
+
+	// Check if the module is enabled
 	if(is_file_monitor_enabled)
 	{
 //		mutex_lock_killable(&m);
+		// Get full path to the current process executable
 		if (mm)
 		{
 			down_read(&mm->mmap_sem);
@@ -225,8 +237,9 @@ volatile unsigned int sys_counter = 0;
 		do_gettimeofday(&time);
 		local_time = (u32)(time.tv_sec - (sys_tz.tz_minuteswest * 60));
 		rtc_time_to_tm(local_time, &tm);
+		// Write to dmesg
 		printk("%s (pid %i) is writing %d bytes to TODO\n", p, current->pid, (int)count);
-
+		// Save to history
 		line_to_add = (struct history_node *)kmalloc(sizeof(struct history_node), GFP_KERNEL);
 		if(unlikely(!line_to_add))
 		{
@@ -257,6 +270,7 @@ volatile unsigned int sys_counter = 0;
  	return orig_sys_write(fd, buf, count);
  }
 
+// Init module
  static int __init file_monitor_init(void)
  {
  	unsigned long cr0;
@@ -299,6 +313,7 @@ volatile unsigned int sys_counter = 0;
  	return 0;
  }
 
+// Release module
  static void __exit file_monitor_release(void)
  {
  	 unsigned long cr0;
@@ -313,7 +328,7 @@ volatile unsigned int sys_counter = 0;
 		 kfree(curr_his_node);
 	 }
 
- 	 printk(KERN_DEBUG "Stopping KMonitor module!\n");
+ 	 printk(KERN_DEBUG "Stopping file monitor module!\n");
 
  	 cr0 = read_cr0();
  	 write_cr0(cr0 & ~CR0_WP);
@@ -331,5 +346,6 @@ volatile unsigned int sys_counter = 0;
  module_init(file_monitor_init);
  module_exit(file_monitor_release);
 
+// Make it available to KMonitor
 EXPORT_SYMBOL_GPL(is_file_monitor_enabled);
 EXPORT_SYMBOL_GPL(file_mon_history);

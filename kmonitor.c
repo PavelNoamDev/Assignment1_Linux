@@ -5,16 +5,16 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 
-#define MAX_HISTORY 10
-#define MAX_HISTORY_LINE (PATH_MAX*3 + 100)
+#define MAX_HISTORY 10  // Maximum history list size
+#define MAX_HISTORY_LINE (PATH_MAX*3 + 100) //The maximum message line contains 3 file path + extra const words
 
 extern int is_file_monitor_enabled;
 extern int is_network_monitor_enabled;
 extern int is_mount_monitor_enabled;
 
-extern struct history_node file_mon_history;
-extern struct history_node net_mon_history;
-extern struct history_node mount_mon_history;
+extern struct history_node file_mon_history;    // History of filemon events
+extern struct history_node net_mon_history;     // History of netmon events
+extern struct history_node mount_mon_history;   // History of mountmon events
 
 static char *msg = NULL;
 static char msg_read[150] = "";
@@ -22,7 +22,7 @@ static char first_must_line[] = "KMonitor - Last Events:\n";
 static char second_must_line[] = "KMonitor Current Configuration:\n";
 static ssize_t len_check = 1;
 
-// Node in tne list of messages
+// Node in the list of messages
 struct history_node {
     struct list_head node;
     char msg[MAX_HISTORY_LINE];
@@ -31,7 +31,10 @@ struct history_node {
 
 MODULE_LICENSE("GPL");
 
-
+/**
+* This function is called then the kmonitorproc file is read
+*
+*/
 ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, loff_t *offset)
 {
     int msg_len = 0, i;
@@ -50,6 +53,7 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
         return 0;
     }
 
+    // Start building KMonitor report
     msg = (char *)kmalloc(sizeof(char) * size, GFP_KERNEL);
     if(unlikely(!msg))
     {
@@ -72,10 +76,11 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
         file_line = list_entry(file_pos, struct history_node, node);
     }
 
+    // Find last 10 history messages.
     for(i = 0; i < MAX_HISTORY && (net_pos != &net_mon_history.node || mount_pos != &mount_mon_history.node
         || file_pos != &file_mon_history.node); i++)
     {
-        // Find maximum time
+        // Find maximum time between 3 history sorted lists
         max_time = -1;
         if(net_line != NULL && net_line->time_in_sec > max_time)
         {
@@ -90,7 +95,7 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
             max_time = file_line->time_in_sec;
         }
 
-        // Get maximum time message and advance to the next line
+        // Get the message with the maximum time and advance to the next line
         if(net_line != NULL && max_time == net_line->time_in_sec)
         {
             max_line = net_line;
@@ -138,6 +143,7 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
             printk(KERN_ERR "Not enough memory for message! \n");
             return -1;
         }
+        // Some string manipulation to insert the message to the start of the report
         strcpy(tmp_msg, max_line->msg);
         if(tmp_msg2)
         {
@@ -146,6 +152,7 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
         }
         tmp_msg2 = tmp_msg;
     }
+    // Add last 10 history messages to the KMonitor report
     if(tmp_msg2)
     {
         curr_size += strlen(tmp_msg2)+1;
@@ -157,6 +164,7 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
         }
         strcat(msg, tmp_msg2);
     }
+    // Add configuration info to the KMonitor report.
     strcpy(msg_read, second_must_line);
     if(is_file_monitor_enabled)
         strcat(msg_read, "File Monitoring - Enabled\n");
@@ -180,12 +188,14 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
     strcat(msg, msg_read);
     msg_len = strlen(msg) + 1;
     copy_to_user(buf, msg, msg_len);
-//    printk(KERN_INFO "Buffer %s\n", buf);
     kfree(msg);
     return msg_len;
 }
 
-
+/**
+* This function is called then the kmonitorproc file is read
+*
+*/
 ssize_t kmonitor_proc_write(struct file *sp_file, const char __user *buf, size_t size, loff_t *offset)
 {
     msg = (char *)kmalloc(size, GFP_KERNEL);
@@ -195,7 +205,7 @@ ssize_t kmonitor_proc_write(struct file *sp_file, const char __user *buf, size_t
         return -1;
     }
     copy_from_user(msg, buf, size);
-    printk(KERN_INFO "Recived %s\n", msg);
+    // Enable or Disable some monitor
     if(strstr(msg, "NetMon 0"))
         is_network_monitor_enabled = 0;
     else if(strstr(msg, "NetMon 1"))
@@ -213,16 +223,17 @@ ssize_t kmonitor_proc_write(struct file *sp_file, const char __user *buf, size_t
 }
 
 
+// Point proc read and write to our functions
 struct file_operations fops = {
         .read = kmonitor_proc_read,
         .write = kmonitor_proc_write,
 };
 
-
+// Init module
 static int __init init_kmonitorproc (void)
 {
     printk(KERN_INFO "Started kmonitorproc\n");
-    if (! proc_create("kmonitorproc",0666,NULL,&fops))
+    if (!proc_create("kmonitorproc",0666,NULL,&fops))
     {
         printk(KERN_INFO "ERROR! proc_create\n");
         remove_proc_entry("kmonitorproc",NULL);
@@ -231,6 +242,7 @@ static int __init init_kmonitorproc (void)
     return 0;
 }
 
+// Release module
 static void __exit exit_kmonitorproc(void)
 {
     remove_proc_entry("kmonitorproc",NULL);
