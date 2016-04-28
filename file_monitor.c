@@ -11,6 +11,7 @@
 #include <linux/rtc.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include <linux/fdtable.h>
 
 #define CR0_WP 0x00010000	// Write  Protect Bit (CR0:16)
 #define MAX_HISTORY 10	// Maximum history list size
@@ -146,6 +147,46 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
  	char *pathname = NULL,*p = NULL;
  	struct mm_struct *mm = current->mm;
 
+
+
+ 	/*get pathname of fd and put in pathname_fd*/
+ 	char *tmp;
+    char *pathname_fd;
+    struct file *file;
+    const struct path *path;
+    struct files_struct *files = current->files;
+
+    spin_lock(&files->file_lock);
+    file = fcheck_files(files, fd);
+    if (!file) {
+        spin_unlock(&files->file_lock);
+        return -ENOENT;
+    }
+
+    path = &file->f_path;
+    path_get(path);
+    spin_unlock(&files->file_lock);
+
+    tmp = (char *)__get_free_page(GFP_TEMPORARY);
+
+    if (!tmp) {
+        path_put(path);
+        return -ENOMEM;
+    }
+
+    pathname_fd = d_path(path, tmp, PAGE_SIZE);
+    //path_put(/*(const struct path *)*/&path);
+
+    if (IS_ERR(pathname_fd)) {
+        free_page((unsigned long)tmp);
+        return PTR_ERR(pathname_fd);
+    }
+
+    /* do something here with pathname */
+    //printk("filename: %s\n", pathname);
+    
+    free_page((unsigned long)tmp);
+
 	// Check if the module is enabled
 	if(is_file_monitor_enabled)
 	{
@@ -170,7 +211,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		local_time = (u32)(time.tv_sec - (sys_tz.tz_minuteswest * 60));
 		rtc_time_to_tm(local_time, &tm);
 		// Write to dmesg
-		printk("%s (pid %i) is reading %d bytes from TODO\n", p, current->pid, (int)count);
+		printk("%s (pid %i) is reading %d bytes from %s\n", p, current->pid, (int)count, pathname_fd);
 		// Save to history
 		line_to_add = (struct history_node *)kmalloc(sizeof(struct history_node), GFP_KERNEL);
 		if(unlikely(!line_to_add))
@@ -180,9 +221,9 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		}
 
 		snprintf(line_to_add->msg, MAX_HISTORY_LINE,
-		"%02d/%02d/%04d %02d:%02d:%02d, %s (pid %i) is reading %d bytes from TODO\n",
+		"%02d/%02d/%04d %02d:%02d:%02d, %s (pid %i) is reading %d bytes from %s\n",
 		tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900, tm.tm_hour, tm.tm_min, tm.tm_sec,
-		p, current->pid, (int)count);
+		p, current->pid, (int)count, pathname_fd);
 		line_to_add->time_in_sec = (u32)time.tv_sec;
 
 		list_add(&(line_to_add->node), &(file_mon_history.node));
@@ -214,6 +255,45 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
  	char *pathname = NULL,*p = NULL;
  	struct mm_struct *mm = current->mm;
 
+
+ 	/*get pathname of fd and put in pathname_fd*/
+ 	char *tmp;
+    char *pathname_fd;
+    struct file *file;
+    const struct path *path;
+    struct files_struct *files = current->files;
+
+    spin_lock(&files->file_lock);
+    file = fcheck_files(files, fd);
+    if (!file) {
+        spin_unlock(&files->file_lock);
+        return -ENOENT;
+    }
+
+    path = &file->f_path;
+    path_get(path);
+    spin_unlock(&files->file_lock);
+
+    tmp = (char *)__get_free_page(GFP_TEMPORARY);
+
+    if (!tmp) {
+        path_put(path);
+        return -ENOMEM;
+    }
+
+    pathname_fd = d_path(path, tmp, PAGE_SIZE);
+    //path_put(/*(const struct path *)*/&path);
+
+    if (IS_ERR(pathname_fd)) {
+        free_page((unsigned long)tmp);
+        return PTR_ERR(pathname_fd);
+    }
+
+    /* do something here with pathname */
+    //printk("filename: %s\n", pathname);
+    
+    free_page((unsigned long)tmp);
+
 	// Check if the module is enabled
 	if(is_file_monitor_enabled)
 	{
@@ -238,7 +318,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		local_time = (u32)(time.tv_sec - (sys_tz.tz_minuteswest * 60));
 		rtc_time_to_tm(local_time, &tm);
 		// Write to dmesg
-		printk("%s (pid %i) is writing %d bytes to TODO\n", p, current->pid, (int)count);
+		printk("%s (pid %i) is writing %d bytes to %s\n", p, current->pid, (int)count, pathname_fd);
 		// Save to history
 		line_to_add = (struct history_node *)kmalloc(sizeof(struct history_node), GFP_KERNEL);
 		if(unlikely(!line_to_add))
@@ -248,9 +328,9 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		}
 
 		snprintf(line_to_add->msg, MAX_HISTORY_LINE,
-		"%02d/%02d/%04d %02d:%02d:%02d, %s (pid %i) is writing %d bytes to TODO\n",
+		"%02d/%02d/%04d %02d:%02d:%02d, %s (pid %i) is writing %d bytes to %s\n",
 		tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900, tm.tm_hour, tm.tm_min, tm.tm_sec,
-		p, current->pid, (int)count);
+		p, current->pid, (int)count, pathname_fd);
 		line_to_add->time_in_sec = (u32)time.tv_sec;
 
 		list_add(&(line_to_add->node), &(file_mon_history.node));
