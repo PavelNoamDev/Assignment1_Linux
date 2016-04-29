@@ -10,6 +10,7 @@
 #include <linux/timekeeping.h>
 #include <linux/rtc.h>
 #include <linux/list.h>
+#include <linux/mutex.h>
 
 #define CR0_WP 0x00010000   // Write  Protect Bit (CR0:16)
 #define MAX_HISTORY 10  // Maximum history list size
@@ -21,6 +22,9 @@ int is_mount_monitor_enabled = 1;   // Used by KMonitor to control this module
 int curr_num_of_history_lines = 0;
 
 struct history_node mount_mon_history;  // History of events
+struct mutex mount_enabled_mutex;
+struct mutex mount_history_mutex;
+
 
 // Node in tne list of mount monitor messages
 struct history_node {
@@ -75,6 +79,7 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
     struct mm_struct *mm = current->mm;
     int result = orig_sys_mount(source, target, filesystemtype, flags, data);
 
+    mutex_lock_killable(&mount_enabled_mutex);
     // Check if the module is enabled and there was no error in the original sys_mount
     if(is_mount_monitor_enabled && result == 0)
     {
@@ -86,6 +91,7 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
                 if(unlikely(!pathname))
                 {
                     printk(KERN_ERR "Not enough memory for pathname! \n");
+                    mutex_unlock(&mount_enabled_mutex);
                     return result;
                 }
                 p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
@@ -108,6 +114,7 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
         if(unlikely(!line_to_add))
         {
             printk(KERN_ERR "Not enough memory for history_node!\n");
+            mutex_unlock(&mount_enabled_mutex);
             return result;
         }
 
@@ -117,6 +124,7 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
         p, current->pid, source, target, filesystemtype);
         line_to_add->time_in_sec = (u32)time.tv_sec;
 
+        mutex_lock_killable(&mount_history_mutex);
         list_add(&(line_to_add->node), &(mount_mon_history.node));
         curr_num_of_history_lines++;
 
@@ -128,8 +136,10 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
             kfree(last_history_node);
             curr_num_of_history_lines--;
         }
+        mutex_unlock(&mount_history_mutex);
         kfree(pathname);
     }
+    mutex_unlock(&mount_enabled_mutex);
     return result;
 }
 
@@ -137,7 +147,8 @@ long my_sys_mount(  char __user *source, char __user *target, char __user *files
 static int __init mount_monitor_init(void)
 {
     unsigned long cr0;
-
+    mutex_init(&mount_enabled_mutex);
+    mutex_init(&mount_history_mutex);
     printk(KERN_DEBUG "Let's do some magic!\n");
 
     syscall_table = (void **) find_sys_call_table();
@@ -172,6 +183,7 @@ static void __exit mount_monitor_release(void)
     struct history_node *curr_his_node = NULL;
     struct list_head *tmp_node = NULL, *pos = NULL;
 
+    mutex_lock_killable(&mount_history_mutex);
     // Free memory of history
     list_for_each_safe(pos, tmp_node, &mount_mon_history.node)
     {
@@ -179,6 +191,7 @@ static void __exit mount_monitor_release(void)
         printk(KERN_DEBUG "Freeing node with msg: %s \n", curr_his_node->msg);
         kfree(curr_his_node);
     }
+    mutex_unlock(&mount_history_mutex);
 
     printk(KERN_DEBUG "Stopping mount_monitor module!\n");
 
@@ -197,3 +210,5 @@ module_exit(mount_monitor_release);
 // Make it available to KMonitor
 EXPORT_SYMBOL_GPL(is_mount_monitor_enabled);
 EXPORT_SYMBOL_GPL(mount_mon_history);
+EXPORT_SYMBOL_GPL(mount_enabled_mutex);
+EXPORT_SYMBOL_GPL(mount_history_mutex);

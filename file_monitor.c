@@ -23,7 +23,9 @@ int is_file_monitor_enabled = 1;	// Used by KMonitor to control this module
 int curr_num_of_history_lines = 0;
 
 struct history_node file_mon_history;	// History of events
-//struct mutex m;
+
+struct mutex file_enabled_mutex;
+struct mutex file_history_mutex;
 
 // Node in tne list of file monitor messages
 struct history_node {
@@ -80,10 +82,10 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 	char *pathname = NULL,*p = NULL;
 	struct mm_struct *mm = current->mm;
 
+	mutex_lock_killable(&file_enabled_mutex);
 	// Check if the module is enabled
 	if(is_file_monitor_enabled)
 	{
-//		mutex_lock_killable(&m);
 		// Get full path to the current process executable
 		if (mm) {
 			down_read(&mm->mmap_sem);
@@ -92,6 +94,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 				if(unlikely(!pathname))
 				{
 					printk(KERN_ERR "Not enough memory for pathname! \n");
+					mutex_unlock(&file_enabled_mutex);
 					return orig_sys_open(filename, flags, mode);
 				}
 				p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
@@ -109,6 +112,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		if(unlikely(!line_to_add))
 		{
 			printk(KERN_ERR "Not enough memory for history_node!\n");
+			mutex_unlock(&file_enabled_mutex);
 			return orig_sys_open(filename, flags, mode);
 		}
 
@@ -118,6 +122,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		p, current->pid, filename);
 		line_to_add->time_in_sec = (u32)time.tv_sec;
 
+		mutex_lock_killable(&file_history_mutex);
 		list_add(&(line_to_add->node), &(file_mon_history.node));
 		curr_num_of_history_lines++;
 
@@ -129,9 +134,10 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 			kfree(last_history_node);
 			curr_num_of_history_lines--;
 		}
+		mutex_unlock(&file_history_mutex);
 		kfree(pathname);
-//		mutex_unlock(&m);
 	}
+	mutex_unlock(&file_enabled_mutex);
  	return orig_sys_open(filename, flags, mode);
  }
 
@@ -146,8 +152,6 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 	struct history_node *line_to_add = NULL, *last_history_node = NULL;
  	char *pathname = NULL,*p = NULL;
  	struct mm_struct *mm = current->mm;
-
-
 
  	/*get pathname of fd and put in pathname_fd*/
  	char *tmp;
@@ -175,22 +179,18 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
     }
 
     pathname_fd = d_path(path, tmp, PAGE_SIZE);
-    //path_put(/*(const struct path *)*/&path);
 
     if (IS_ERR(pathname_fd)) {
         free_page((unsigned long)tmp);
         return PTR_ERR(pathname_fd);
     }
 
-    /* do something here with pathname */
-    //printk("filename: %s\n", pathname);
-    
     free_page((unsigned long)tmp);
 
+	mutex_lock_killable(&file_enabled_mutex);
 	// Check if the module is enabled
 	if(is_file_monitor_enabled)
 	{
-//		mutex_lock_killable(&m);
 		// Get full path to the current process executable
 		if (mm)
 		{
@@ -200,6 +200,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 				if(unlikely(!pathname))
 				{
 					printk(KERN_ERR "Not enough memory for pathname! \n");
+					mutex_unlock(&file_enabled_mutex);
 					return orig_sys_read(fd, buf, count);
 				}
 				p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
@@ -217,6 +218,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		if(unlikely(!line_to_add))
 		{
 			printk(KERN_ERR "Not enough memory for history_node!\n");
+			mutex_unlock(&file_enabled_mutex);
 			return orig_sys_read(fd, buf, count);
 		}
 
@@ -226,6 +228,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		p, current->pid, (int)count, pathname_fd);
 		line_to_add->time_in_sec = (u32)time.tv_sec;
 
+		mutex_lock_killable(&file_history_mutex);
 		list_add(&(line_to_add->node), &(file_mon_history.node));
 		curr_num_of_history_lines++;
 
@@ -237,9 +240,10 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 			kfree(last_history_node);
 			curr_num_of_history_lines--;
 		}
+		mutex_unlock(&file_history_mutex);
 		kfree(pathname);
-//		mutex_unlock(&m);
 	}
+	mutex_unlock(&file_enabled_mutex);
  	return orig_sys_read(fd, buf, count);
  }
 
@@ -254,7 +258,6 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 	struct history_node *line_to_add = NULL, *last_history_node = NULL;
  	char *pathname = NULL,*p = NULL;
  	struct mm_struct *mm = current->mm;
-
 
  	/*get pathname of fd and put in pathname_fd*/
  	char *tmp;
@@ -282,22 +285,18 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
     }
 
     pathname_fd = d_path(path, tmp, PAGE_SIZE);
-    //path_put(/*(const struct path *)*/&path);
 
     if (IS_ERR(pathname_fd)) {
         free_page((unsigned long)tmp);
         return PTR_ERR(pathname_fd);
     }
 
-    /* do something here with pathname */
-    //printk("filename: %s\n", pathname);
-    
     free_page((unsigned long)tmp);
 
+	mutex_lock_killable(&file_enabled_mutex);
 	// Check if the module is enabled
 	if(is_file_monitor_enabled)
 	{
-//		mutex_lock_killable(&m);
 		// Get full path to the current process executable
 		if (mm)
 		{
@@ -307,6 +306,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 				if(unlikely(!pathname))
 				{
 					printk(KERN_ERR "Not enough memory for pathname! \n");
+					mutex_unlock(&file_enabled_mutex);
 					return orig_sys_write(fd, buf, count);
 				}
 				p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
@@ -324,6 +324,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		if(unlikely(!line_to_add))
 		{
 			printk(KERN_ERR "Not enough memory for history_node!\n");
+			mutex_unlock(&file_enabled_mutex);
 			return orig_sys_write(fd, buf, count);
 		}
 
@@ -333,6 +334,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		p, current->pid, (int)count, pathname_fd);
 		line_to_add->time_in_sec = (u32)time.tv_sec;
 
+		mutex_lock_killable(&file_history_mutex);
 		list_add(&(line_to_add->node), &(file_mon_history.node));
 		curr_num_of_history_lines++;
 
@@ -344,9 +346,10 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 			kfree(last_history_node);
 			curr_num_of_history_lines--;
 		}
+		mutex_unlock(&file_history_mutex);
 		kfree(pathname);
-//		mutex_unlock(&m);
 	}
+	mutex_unlock(&file_enabled_mutex);
  	return orig_sys_write(fd, buf, count);
  }
 
@@ -354,9 +357,8 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
  static int __init file_monitor_init(void)
  {
  	unsigned long cr0;
-
-//	 mutex_init(&m);
-
+    mutex_init(&file_enabled_mutex);
+    mutex_init(&file_history_mutex);
  	printk(KERN_DEBUG "Let's do some magic!\n");
 
  	syscall_table = (void **) find_sys_call_table();
@@ -400,6 +402,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 	 struct history_node *curr_his_node = NULL;
 	 struct list_head *tmp_node = NULL, *pos = NULL;
 
+	 mutex_lock_killable(&file_history_mutex);
 	 // Free memory of history
 	 list_for_each_safe(pos, tmp_node, &file_mon_history.node)
 	 {
@@ -407,6 +410,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 		 printk(KERN_DEBUG "Freeing node with msg: %s \n", curr_his_node->msg);
 		 kfree(curr_his_node);
 	 }
+	 mutex_unlock(&file_history_mutex);
 
  	 printk(KERN_DEBUG "Stopping file monitor module!\n");
 
@@ -429,3 +433,5 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 // Make it available to KMonitor
 EXPORT_SYMBOL_GPL(is_file_monitor_enabled);
 EXPORT_SYMBOL_GPL(file_mon_history);
+EXPORT_SYMBOL_GPL(file_enabled_mutex);
+EXPORT_SYMBOL_GPL(file_history_mutex);

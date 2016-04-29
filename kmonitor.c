@@ -16,6 +16,13 @@ extern struct history_node file_mon_history;    // History of filemon events
 extern struct history_node net_mon_history;     // History of netmon events
 extern struct history_node mount_mon_history;   // History of mountmon events
 
+extern struct mutex mount_enabled_mutex;
+extern struct mutex mount_history_mutex;
+extern struct mutex network_enabled_mutex;
+extern struct mutex network_history_mutex;
+extern struct mutex file_enabled_mutex;
+extern struct mutex file_history_mutex;
+
 static char *msg = NULL;
 static char msg_read[150] = "";
 static char first_must_line[] = "KMonitor - Last Events:\n";
@@ -31,6 +38,30 @@ struct history_node {
 
 MODULE_LICENSE("GPL");
 
+void lock_all_enabled(void){
+    mutex_lock_killable(&file_enabled_mutex);
+    mutex_lock_killable(&network_enabled_mutex);
+    mutex_lock_killable(&mount_enabled_mutex);
+}
+
+void unlock_all_enabled(void){
+    mutex_unlock(&mount_enabled_mutex);
+    mutex_unlock(&network_enabled_mutex);
+    mutex_unlock(&file_enabled_mutex);
+}
+
+void lock_all_history(void){
+    mutex_lock_killable(&file_history_mutex);
+    mutex_lock_killable(&network_history_mutex);
+    mutex_lock_killable(&mount_history_mutex);
+}
+
+void unlock_all_history(void){
+    mutex_unlock(&mount_history_mutex);
+    mutex_unlock(&network_history_mutex);
+    mutex_unlock(&file_history_mutex);
+}
+
 /**
 * This function is called then the kmonitorproc file is read
 *
@@ -40,8 +71,7 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
     int msg_len = 0, i;
     long max_time;
     struct history_node *net_line = NULL, *mount_line = NULL, *file_line = NULL, *max_line = NULL;
-    struct list_head *net_pos = net_mon_history.node.next, *mount_pos = mount_mon_history.node.next;
-    struct list_head *file_pos = file_mon_history.node.next;
+    struct list_head *net_pos = NULL, *mount_pos = NULL, *file_pos = NULL;
     size_t curr_size = strlen(first_must_line)+1;
     size_t curr_tmp_size = 0;
     char *tmp_msg = NULL, *tmp_msg2 = NULL;
@@ -62,6 +92,10 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
     }
     strcpy(msg, first_must_line);
 
+    lock_all_history();
+    mount_pos = mount_mon_history.node.next;
+    net_pos = net_mon_history.node.next;
+    file_pos = file_mon_history.node.next;
     // Init lines with first line
     if(net_pos != &net_mon_history.node)
     {
@@ -141,6 +175,7 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
         if(unlikely(!tmp_msg))
         {
             printk(KERN_ERR "Not enough memory for message! \n");
+            unlock_all_history();
             return -1;
         }
         // Some string manipulation to insert the message to the start of the report
@@ -152,6 +187,7 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
         }
         tmp_msg2 = tmp_msg;
     }
+    unlock_all_history();
     // Add last 10 history messages to the KMonitor report
     if(tmp_msg2)
     {
@@ -166,6 +202,7 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
     }
     // Add configuration info to the KMonitor report.
     strcpy(msg_read, second_must_line);
+    lock_all_enabled();
     if(is_file_monitor_enabled)
         strcat(msg_read, "File Monitoring - Enabled\n");
     else
@@ -178,6 +215,7 @@ ssize_t kmonitor_proc_read(struct file *sp_file, char __user *buf, size_t size, 
         strcat(msg_read, "Mount Monitoring - Enabled\n");
     else
         strcat(msg_read, "Mount Monitoring - Disabled\n");
+    unlock_all_enabled();
     curr_size += strlen(msg_read)+1;
     msg = (char *)krealloc(msg, (size_t)(sizeof(char)*curr_size), GFP_KERNEL);
     if(unlikely(!msg))
@@ -206,18 +244,36 @@ ssize_t kmonitor_proc_write(struct file *sp_file, const char __user *buf, size_t
     }
     copy_from_user(msg, buf, size);
     // Enable or Disable some monitor
-    if(strstr(msg, "NetMon 0"))
+    if(strstr(msg, "NetMon 0")){
+        mutex_lock_killable(&network_enabled_mutex);
         is_network_monitor_enabled = 0;
-    else if(strstr(msg, "NetMon 1"))
+        mutex_unlock(&network_enabled_mutex);
+    }
+    else if(strstr(msg, "NetMon 1")){
+        mutex_lock_killable(&network_enabled_mutex);
         is_network_monitor_enabled = 1;
-    else if(strstr(msg, "FileMon 0"))
+        mutex_unlock(&network_enabled_mutex);
+    }
+    else if(strstr(msg, "FileMon 0")){
+        mutex_lock_killable(&file_enabled_mutex);
         is_file_monitor_enabled = 0;
-    else if(strstr(msg, "FileMon 1"))
+        mutex_unlock(&file_enabled_mutex);
+    }
+    else if(strstr(msg, "FileMon 1")){
+        mutex_lock_killable(&file_enabled_mutex);
         is_file_monitor_enabled = 1;
-    else if(strstr(msg, "MountMon 0"))
+        mutex_unlock(&file_enabled_mutex);
+    }
+    else if(strstr(msg, "MountMon 0")){
+        mutex_lock_killable(&mount_enabled_mutex);
         is_mount_monitor_enabled = 0;
-    else if(strstr(msg, "MountMon 1"))
+        mutex_unlock(&mount_enabled_mutex);
+    }
+    else if(strstr(msg, "MountMon 1")){
+        mutex_lock_killable(&mount_enabled_mutex);
         is_mount_monitor_enabled = 1;
+        mutex_unlock(&mount_enabled_mutex);
+    }
     kfree(msg);
     return size;
 }
@@ -232,11 +288,11 @@ struct file_operations fops = {
 // Init module
 static int __init init_kmonitorproc (void)
 {
-    printk(KERN_INFO "Started kmonitorproc\n");
-    if (!proc_create("kmonitorproc",0666,NULL,&fops))
+    printk(KERN_INFO "Started KMonitor\n");
+    if (!proc_create("KMonitor",0666,NULL,&fops))
     {
         printk(KERN_INFO "ERROR! proc_create\n");
-        remove_proc_entry("kmonitorproc",NULL);
+        remove_proc_entry("KMonitor",NULL);
         return -1;
     }
     return 0;
@@ -245,8 +301,8 @@ static int __init init_kmonitorproc (void)
 // Release module
 static void __exit exit_kmonitorproc(void)
 {
-    remove_proc_entry("kmonitorproc",NULL);
-    printk(KERN_INFO "Exit kmonitorproc\n");
+    remove_proc_entry("KMonitor",NULL);
+    printk(KERN_INFO "Exit KMonitor\n");
 }
 
 module_init(init_kmonitorproc);

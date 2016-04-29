@@ -13,6 +13,7 @@
 #include <linux/timekeeping.h>
 #include <linux/rtc.h>
 #include <linux/byteorder/generic.h>
+#include <linux/mutex.h>
 
 #define CR0_WP 0x00010000   // Write  Protect Bit (CR0:16)
 #define SOCK_STREAM 1
@@ -23,6 +24,9 @@ MODULE_LICENSE("GPL");
 
 int is_network_monitor_enabled = 1; // Used by KMonitor to control this module
 int curr_num_of_history_lines = 0;
+
+struct mutex network_enabled_mutex;
+struct mutex network_history_mutex;
 
 struct socket_node sockets_lst; // Previously seen sockets
 
@@ -116,9 +120,13 @@ long my_sys_socket(int domain, int type, int protocol)
         return sockfd;
     }
 
+    mutex_lock_killable(&network_enabled_mutex);
     // Check if TCP and IPv4 socket and monitoring enabled
-    if(type != SOCK_STREAM || domain != AF_INET || !is_network_monitor_enabled)
+    if(type != SOCK_STREAM || domain != AF_INET || !is_network_monitor_enabled){
+        mutex_unlock(&network_enabled_mutex);
         return sockfd;
+    }
+    mutex_unlock(&network_enabled_mutex);
 
     // Check if there is already node with this fd (because we can replace it)
     list_for_each_safe(pos, tmp_node, &sockets_lst.node)
@@ -157,6 +165,7 @@ long my_sys_bind(int sockfd, struct sockaddr __user *addr, int addrlen)
     unsigned short port = ntohs(((struct sockaddr_in *)addr)->sin_port);
     struct in_addr ip = ((struct sockaddr_in *)addr)->sin_addr;
 
+    mutex_lock_killable(&network_enabled_mutex);
     // Check if the module is enabled
     if(is_network_monitor_enabled)
     {
@@ -168,10 +177,12 @@ long my_sys_bind(int sockfd, struct sockaddr __user *addr, int addrlen)
             {
                 curr_node->port = port;
                 curr_node->ip = ip;
+                mutex_unlock(&network_enabled_mutex);
                 return orig_sys_bind(sockfd, addr, addrlen);
             }
         }
     }
+    mutex_unlock(&network_enabled_mutex);
     return orig_sys_bind(sockfd, addr, addrlen);
 }
 
@@ -189,6 +200,7 @@ int my_sys_listen(int sockfd, int backlog)
     struct mm_struct *mm = current->mm;
     struct history_node *line_to_add = NULL, *last_history_node = NULL;
 
+    mutex_lock_killable(&network_enabled_mutex);
     // Check if the module is enabled
     if(is_network_monitor_enabled) {
         // Get full path to the current process executable
@@ -199,6 +211,7 @@ int my_sys_listen(int sockfd, int backlog)
                 if(unlikely(!pathname))
                 {
                     printk(KERN_ERR "Not enough memory for pathname! \n");
+                    mutex_unlock(&network_enabled_mutex);
                     return orig_sys_listen(sockfd, backlog);
                 }
                 p = d_path(&mm->exe_file->f_path, pathname, PATH_MAX);
@@ -225,6 +238,7 @@ int my_sys_listen(int sockfd, int backlog)
                 if(unlikely(!line_to_add))
                 {
                     printk(KERN_ERR "Not enough memory for history_node! \n");
+                    mutex_unlock(&network_enabled_mutex);
                     return orig_sys_listen(sockfd, backlog);
                 }
                 snprintf(line_to_add->msg, MAX_HISTORY_LINE,
@@ -232,6 +246,7 @@ int my_sys_listen(int sockfd, int backlog)
                          tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900, tm.tm_hour, tm.tm_min, tm.tm_sec,
                          p, current->pid, NIPQUAD(curr_node->ip), curr_node->port);
                 line_to_add->time_in_sec = (u32)time.tv_sec;
+                mutex_lock_killable(&network_history_mutex);
                 list_add(&(line_to_add->node), &(net_mon_history.node));
                 curr_num_of_history_lines++;
 
@@ -243,13 +258,15 @@ int my_sys_listen(int sockfd, int backlog)
                     kfree(last_history_node);
                     curr_num_of_history_lines--;
                 }
-
+                mutex_unlock(&network_history_mutex);
+                mutex_unlock(&network_enabled_mutex);
                 kfree(pathname);
                 return orig_sys_listen(sockfd, backlog);
             }
         }
         kfree(pathname);
     }
+    mutex_unlock(&network_enabled_mutex);
     return orig_sys_listen(sockfd, backlog);
 }
 
@@ -268,9 +285,13 @@ long my_sys_accept(int sockfd, struct sockaddr __user *addr, int __user *addrlen
     char *pathname = NULL, *p = NULL;
     struct mm_struct *mm = current->mm;
 
+    mutex_lock_killable(&network_enabled_mutex);
     // Check if client with IPv4 and network monitoring is enabled and that there was no error in the original accept
-    if(((struct sockaddr_in *)addr)->sin_family != AF_INET || !is_network_monitor_enabled || new_sockfd < 0)
+    if(((struct sockaddr_in *)addr)->sin_family != AF_INET || !is_network_monitor_enabled || new_sockfd < 0){
+        mutex_unlock(&network_enabled_mutex);
         return new_sockfd;
+    }
+    mutex_unlock(&network_enabled_mutex);
 
     // Get current time
     do_gettimeofday(&time);
@@ -308,6 +329,7 @@ long my_sys_accept(int sockfd, struct sockaddr __user *addr, int __user *addrlen
     p, current->pid, NIPQUAD(ip), port);
     line_to_add->time_in_sec = (u32)time.tv_sec;
 
+    mutex_lock_killable(&network_history_mutex);
     list_add(&(line_to_add->node), &(net_mon_history.node));
     curr_num_of_history_lines++;
 
@@ -319,7 +341,7 @@ long my_sys_accept(int sockfd, struct sockaddr __user *addr, int __user *addrlen
         kfree(last_history_node);
         curr_num_of_history_lines--;
     }
-
+    mutex_unlock(&network_history_mutex);
     kfree(pathname);
     return new_sockfd;
 }
@@ -328,6 +350,9 @@ long my_sys_accept(int sockfd, struct sockaddr __user *addr, int __user *addrlen
 static int __init network_monitor_init(void)
 {
     unsigned long cr0;
+
+    mutex_init(&network_enabled_mutex);
+    mutex_init(&network_history_mutex);
 
     printk(KERN_DEBUG "Let's do some magic!\n");
 
@@ -385,6 +410,7 @@ static void __exit network_monitor_release(void)
         kfree(curr_node);
     }
 
+    mutex_lock_killable(&network_history_mutex);
     // Free memory of history
     list_for_each_safe(pos, tmp_node, &net_mon_history.node)
     {
@@ -392,6 +418,7 @@ static void __exit network_monitor_release(void)
         printk(KERN_DEBUG "Freeing node with msg: %s \n", curr_his_node->msg);
         kfree(curr_his_node);
     }
+    mutex_unlock(&network_history_mutex);
 
     printk(KERN_DEBUG "Stopping network_monitor module!\n");
 
@@ -412,3 +439,5 @@ module_exit(network_monitor_release);
 // Make it available to KMonitor
 EXPORT_SYMBOL_GPL(is_network_monitor_enabled);
 EXPORT_SYMBOL_GPL(net_mon_history);
+EXPORT_SYMBOL_GPL(network_enabled_mutex);
+EXPORT_SYMBOL_GPL(network_history_mutex);
