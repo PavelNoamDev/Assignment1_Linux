@@ -197,10 +197,7 @@ static void __exit mount_monitor_release(void)
 
     cr0 = read_cr0();
     write_cr0(cr0 & ~CR0_WP);
-
-    /*hooking sys_mount*/
     syscall_table[__NR_mount] = orig_sys_mount;
-
     write_cr0(cr0);
 }
 
