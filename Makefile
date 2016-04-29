@@ -1,7 +1,6 @@
 obj-m += file_monitor.o
 obj-m += network_monitor.o
 obj-m += mount_monitor.o
-obj-m += mount_monitor.o
 obj-m += kmonitor.o
 
 all:
