@@ -419,9 +419,7 @@ long (*orig_sys_write)(unsigned int fd, const char __user *buf, size_t count);
 
      /*reinstating open, read and write*/
  	 syscall_table[__NR_open] = orig_sys_open;
-
  	 syscall_table[__NR_read] = orig_sys_read;
-
  	 syscall_table[__NR_write] = orig_sys_write;
 
  	 write_cr0(cr0);
